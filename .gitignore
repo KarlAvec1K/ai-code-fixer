@@ -1,0 +1,19 @@
+# Environnement virtuel Python
+ai-code-fixer.venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Fichiers temporaires ou générés
+memory.json
+logs/
+
+# IDE / Éditeurs
+.idea/
+.vscode/
+*.iml
+
+# Fichiers système ou backup
+.DS_Store
+*.swp
+*~
