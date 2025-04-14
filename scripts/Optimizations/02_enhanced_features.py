@@ -38,18 +38,41 @@ def backup_current_code():
     """Create a backup of the current code state"""
     logger.info("Creating backup of current code...")
     
-    if BACKUP_DIR.exists():
-        shutil.rmtree(BACKUP_DIR)
-    
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    
-    for file in AI_FIXER_DIR.glob("**/*.py"):
-        relative_path = file.relative_to(AI_FIXER_DIR)
-        target_path = BACKUP_DIR / relative_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file, target_path)
-    
-    logger.info(f"Backup created at {BACKUP_DIR}")
+    try:
+        if BACKUP_DIR.exists():
+            # Create temporary backup before removal
+            temp_backup = Path(tempfile.mkdtemp()) / "temp_backup"
+            shutil.copytree(BACKUP_DIR, temp_backup)
+
+            try:
+                shutil.rmtree(BACKUP_DIR)
+            except Exception as e:
+                # Restore from temp if removal fails
+                if temp_backup.exists():
+                    shutil.copytree(temp_backup, BACKUP_DIR)
+                logger.error(f"Error removing old backup: {e}")
+                return False
+
+        # Create new backup directory
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Copy all Python files from AI_FIXER_DIR
+        for file in AI_FIXER_DIR.glob("**/*.py"):
+            relative_path = file.relative_to(AI_FIXER_DIR)
+            target_path = BACKUP_DIR / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(file, target_path)
+            except Exception as e:
+                logger.error(f"Error copying {file}: {e}")
+                continue
+
+        logger.info(f"Backup created at {BACKUP_DIR}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        return False
 
 def implement_parallel_processing():
     """Implement parallel processing for test runs and LLM calls"""

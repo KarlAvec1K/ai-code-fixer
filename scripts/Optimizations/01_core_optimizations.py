@@ -38,13 +38,11 @@ BACKUP_DIR = BASE_DIR / "backups" / "script1_backup"
 def backup_current_code():
     """Create a backup of the current code state"""
     logger.info("Creating backup of current code...")
-
     try:
         if BACKUP_DIR.exists():
             # Create temporary backup before removal
             temp_backup = Path(tempfile.mkdtemp()) / "temp_backup"
             shutil.copytree(BACKUP_DIR, temp_backup)
-
             try:
                 shutil.rmtree(BACKUP_DIR)
             except Exception as e:
@@ -53,6 +51,16 @@ def backup_current_code():
                     shutil.copytree(temp_backup, BACKUP_DIR)
                 logger.error(f"Error removing old backup: {e}")
                 return False
+
+        # Create new backup
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(AI_FIXER_DIR, BACKUP_DIR, dirs_exist_ok=True)
+        logger.info(f"Created backup at {BACKUP_DIR}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to create backup: {e}")
+        return False
 def setup_cache_system():
     """Set up LLM response caching system"""
     logger.info("Setting up LLM response caching system...")
@@ -106,14 +114,24 @@ def get_cached_response(prompt: str, model: str) -> Optional[str]:
 
                 # Update cache stats
                 update_cache_stats("hits")
-                return cache_data.get("response")
+def cache_response(prompt: str, model: str, response: str) -> None:
+    """Cache an LLM response with metadata"""
+    if not response or not prompt:
+        return
+    cache_key = generate_cache_key(prompt, model)
+    cache_file = CACHE_DIR / f"{cache_key}.json"
 
-            except (json.JSONDecodeError, FileNotFoundError):
-                return None
+    cache_data = {
+        "response": response,
+        "timestamp": time.time(),
+        "model": model,
+        "prompt_hash": hashlib.md5(prompt.encode()).hexdigest()
+    }
 
-        # Update cache stats
-        update_cache_stats("misses")
-        return None
+    with cache_lock:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+        update_cache_stats("size", len(response))
 def cache_response(prompt: str, model: str, response: str) -> None:
     """Cache an LLM response with metadata"""
     if not response or not prompt:
@@ -264,21 +282,27 @@ def retry_with_exponential_backoff(max_retries=3, base_delay=1):
                     updated_content[function_position:]
                 )
                 
-        # Replace run_ollama function
-        if "def run_ollama" in updated_content:
-            start_idx = updated_content.find("def run_ollama")
-            end_idx = updated_content.find("def ", start_idx + 1)
-            if end_idx == -1:
-                end_idx = len(updated_content)
-            updated_content = updated_content[:start_idx] + enhanced_run_ollama + updated_content[end_idx:]
-            
-        # Write updated content
-        with open(llm_interface_path, "w") as f:
-            f.write(updated_content)
-            
-        logger.info("Enhanced error handling in llm_interface.py")
-        return True
+enhanced_generate_fix = """async def generate_fix(prompt: str, model: str = None) -> str:
+    """Generate a fix using the specified LLM model"""
+    if not model:
+        model = CONFIG.get("llm_model", "codellama:13b-instruct")
+
+    raw_output, success = await run_ollama(model, prompt, use_gpu=True)
+
+    if not success or not raw_output.strip():
+        print("⚠️ All attempts failed, trying fallback model...")
+        fallback_model = "codellama:13b-instruct" if model != "codellama:13b-instruct" else "deepseek-coder"
+        raw_output, _ = await run_ollama(fallback_model, prompt, use_gpu=True)
+    output = clean_llm_output(raw_output)
+
+    # Validate output
+    if is_valid_python(output):
+        print(f"✅ Generated valid Python code from [{model}] (length: {len(output)})")
+    else:
+        print(f"⚠️ Generated potentially invalid Python code from [{model}]")
         
+    return output
+"""
     except Exception as e:
         logger.error(f"Failed to enhance error handling: {e}")
         return False
